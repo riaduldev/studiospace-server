@@ -9,17 +9,24 @@ import jwt from "jsonwebtoken";
 const app = express();
 const port = process.env.PORT || 8000;
 
-// Middleware
+const allowedOrigins = [
+  "https://studiospace-client-eta.vercel.app",
+];
+
 app.use(
   cors({
-    origin: [
-      "http://localhost:3000",
-      "https://studiospace-server-bgs9.onrender.com",
-      // আপনার Vercel ফ্রন্টএন্ডের লাইভ ডোমেইন এখানেও প্রয়োজনে যুক্ত করতে পারেন
-    ],
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.log("Blocked by CORS:", origin);
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     credentials: true,
   })
 );
+
 app.use(express.json());
 app.use(cookieParser());
 
