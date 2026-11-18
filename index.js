@@ -12,7 +12,11 @@ const port = process.env.PORT || 8000;
 // Middleware
 app.use(
   cors({
-    origin: ["http://localhost:3000"], // আপনার Next.js ফ্রন্টএন্ড URL
+    origin: [
+      "http://localhost:3000",
+      "https://studiospace-server-bgs9.onrender.com",
+      // আপনার Vercel ফ্রন্টএন্ডের লাইভ ডোমেইন এখানেও প্রয়োজনে যুক্ত করতে পারেন
+    ],
     credentials: true,
   })
 );
@@ -60,9 +64,59 @@ async function run() {
     const bookingsCollection = db.collection("bookings");
 
     // ==========================================
-    // 0. IMAGE UPLOAD ROUTE (Server-side ImgBB)
+    // 0. AUTHENTICATION COOKIE ROUTES (NEW ADDED)
     // ==========================================
-    app.post("/api/upload", upload.single("image"), verifyToken ,async (req, res) => {
+
+    // Login / Issue JWT & Set HTTPOnly Cookie
+    app.post("/api/auth/jwt", async (req, res) => {
+      try {
+        const user = req.body;
+        if (!user?.email) {
+          return res.status(400).json({ success: false, message: "Email is required for authentication" });
+        }
+
+        const token = jwt.sign(
+          { email: user.email },
+          process.env.JWT_SECRET || "your-secret-key",
+          { expiresIn: "7d" }
+        );
+
+        const isProduction = process.env.NODE_ENV === "production";
+
+        res.cookie("token", token, {
+          httpOnly: true,
+          secure: isProduction, // প্রোডাকশনে HTTPS এর জন্য true
+          sameSite: isProduction ? "none" : "lax", // ক্রোস-ডোমেইন কুকির জন্য 'none'
+          maxAge: 7 * 24 * 60 * 60 * 1000, // ৭ দিন
+        });
+
+        res.json({ success: true, message: "Token generated & cookie set successfully" });
+      } catch (error) {
+        res.status(500).json({ success: false, message: "Failed to generate token", error: error.message });
+      }
+    });
+
+    // Logout / Clear Cookie
+    app.post("/api/auth/logout", (req, res) => {
+      try {
+        const isProduction = process.env.NODE_ENV === "production";
+
+        res.clearCookie("token", {
+          httpOnly: true,
+          secure: isProduction,
+          sameSite: isProduction ? "none" : "lax",
+        });
+
+        res.json({ success: true, message: "Logged out successfully" });
+      } catch (error) {
+        res.status(500).json({ success: false, message: "Logout failed", error: error.message });
+      }
+    });
+
+    // ==========================================
+    // 1. IMAGE UPLOAD ROUTE (Server-side ImgBB)
+    // ==========================================
+    app.post("/api/upload", upload.single("image"), verifyToken, async (req, res) => {
       try {
         if (!req.file) {
           return res.status(400).json({ success: false, message: "No image file provided" });
@@ -94,10 +148,10 @@ async function run() {
     });
 
     // ==========================================
-    // 1. STUDIOS CRUD OPERATIONS
+    // 2. STUDIOS CRUD OPERATIONS
     // ==========================================
 
-    // Add New Studio (Private: /add-studio)
+    // Add New Studio (Private)
     app.post("/api/studios", verifyToken, async (req, res) => {
       try {
         const studioData = req.body;
@@ -127,7 +181,7 @@ async function run() {
       }
     });
 
-    // Explore All Studios with Search & Category Filter (/studios)
+    // Explore All Studios with Search & Category Filter
     app.get("/api/studios", async (req, res) => {
       try {
         const { category, search, sort } = req.query;
@@ -155,7 +209,7 @@ async function run() {
       }
     });
 
-    // Get Single Studio Details (/studios/[id])
+    // Get Single Studio Details
     app.get("/api/studios/:id", async (req, res) => {
       try {
         const { id } = req.params;
@@ -174,7 +228,7 @@ async function run() {
       }
     });
 
-    // Get User's Own Studio Listings (/my-listings)
+    // Get User's Own Studio Listings
     app.get("/api/my-studios/:email", async (req, res) => {
       try {
         const { email } = req.params;
@@ -189,8 +243,8 @@ async function run() {
       }
     });
 
-    // Update Studio (/studios/edit/[id])
-    app.patch("/api/studios/:id", async (req, res) => {
+    // Update Studio (Private)
+    app.patch("/api/studios/:id", verifyToken, async (req, res) => {
       try {
         const { id } = req.params;
         const updatedData = req.body;
@@ -223,7 +277,7 @@ async function run() {
       }
     });
 
-    // Delete Studio (/my-listings)
+    // Delete Studio (Private)
     app.delete("/api/studios/:id", verifyToken, async (req, res) => {
       try {
         const { id } = req.params;
@@ -243,10 +297,10 @@ async function run() {
     });
 
     // ==========================================
-    // 2. BOOKING SYSTEM OPERATIONS
+    // 3. BOOKING SYSTEM OPERATIONS
     // ==========================================
 
-    // Create a New Booking (Default status: "Pending")
+    // Create a New Booking (Private)
     app.post("/api/bookings", verifyToken, async (req, res) => {
       try {
         const bookingData = req.body;
@@ -273,7 +327,7 @@ async function run() {
       }
     });
 
-    // Get User Bookings (/my-bookings)
+    // Get User Bookings
     app.get("/api/bookings/:email", async (req, res) => {
       try {
         const { email } = req.params;
@@ -288,7 +342,7 @@ async function run() {
       }
     });
 
-    // Cancel Pending Booking (/my-bookings)
+    // Cancel Pending Booking
     app.patch("/api/bookings/:id/cancel", async (req, res) => {
       try {
         const { id } = req.params;
