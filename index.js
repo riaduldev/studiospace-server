@@ -3,6 +3,8 @@ import "dotenv/config";
 import cors from "cors";
 import { MongoClient, ObjectId, ServerApiVersion } from "mongodb";
 import multer from "multer";
+import cookieParser from "cookie-parser";
+import jwt from "jsonwebtoken";
 
 const app = express();
 const port = process.env.PORT || 8000;
@@ -15,9 +17,29 @@ app.use(
   })
 );
 app.use(express.json());
+app.use(cookieParser());
 
 // Multer setup for image file handling (Memory storage)
 const upload = multer({ storage: multer.memoryStorage() });
+
+// ==========================================
+// JWT Verification Middleware (HTTPOnly Cookie)
+// ==========================================
+const verifyToken = (req, res, next) => {
+  const token = req.cookies?.token;
+
+  if (!token) {
+    return res.status(401).json({ success: false, message: "Unauthorized: No token provided" });
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || "your-secret-key");
+    req.user = decoded;
+    next();
+  } catch (error) {
+    return res.status(401).json({ success: false, message: "Unauthorized: Invalid token" });
+  }
+};
 
 // MongoDB Connection
 const client = new MongoClient(process.env.MONGODB_URI, {
@@ -40,7 +62,7 @@ async function run() {
     // ==========================================
     // 0. IMAGE UPLOAD ROUTE (Server-side ImgBB)
     // ==========================================
-    app.post("/api/upload", upload.single("image"), async (req, res) => {
+    app.post("/api/upload", upload.single("image"), verifyToken ,async (req, res) => {
       try {
         if (!req.file) {
           return res.status(400).json({ success: false, message: "No image file provided" });
@@ -76,7 +98,7 @@ async function run() {
     // ==========================================
 
     // Add New Studio (Private: /add-studio)
-    app.post("/api/studios", async (req, res) => {
+    app.post("/api/studios", verifyToken, async (req, res) => {
       try {
         const studioData = req.body;
 
@@ -202,7 +224,7 @@ async function run() {
     });
 
     // Delete Studio (/my-listings)
-    app.delete("/api/studios/:id", async (req, res) => {
+    app.delete("/api/studios/:id", verifyToken, async (req, res) => {
       try {
         const { id } = req.params;
         if (!ObjectId.isValid(id)) {
@@ -225,7 +247,7 @@ async function run() {
     // ==========================================
 
     // Create a New Booking (Default status: "Pending")
-    app.post("/api/bookings", async (req, res) => {
+    app.post("/api/bookings", verifyToken, async (req, res) => {
       try {
         const bookingData = req.body;
 
