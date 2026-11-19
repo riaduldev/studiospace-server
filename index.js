@@ -164,6 +164,7 @@ const mongoClient = new MongoClient(mongoUri, {
 
 let studiosCollection;
 let bookingsCollection;
+let favoritesCollection;
 
 async function connectToDatabase() {
   await mongoClient.connect();
@@ -171,12 +172,14 @@ async function connectToDatabase() {
   const db = mongoClient.db("studio-space");
   studiosCollection = db.collection("studios");
   bookingsCollection = db.collection("bookings");
+  favoritesCollection = db.collection("favorites");
 
   try {
     await Promise.all([
       studiosCollection.createIndex({ ownerEmail: 1, createdAt: -1 }),
       bookingsCollection.createIndex({ userEmail: 1, createdAt: -1 }),
       bookingsCollection.createIndex({ userEmail: 1, studioId: 1 }),
+      favoritesCollection.createIndex({ userEmail: 1, studioId: 1 }, { unique: true }),
     ]);
   } catch (error) {
     console.warn("Database index setup failed:", error.message);
@@ -640,6 +643,111 @@ app.post(
     }
   }
 );
+
+// ---------- Favorites (Saved Studios Wishlist) ----------
+
+app.get("/api/favorites", requireAuth, async (req, res) => {
+  try {
+    const favorites = await favoritesCollection
+      .find({ userEmail: req.auth.user.email })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    const studioIds = favorites
+      .map((favorite) => favorite.studioId)
+      .filter((id) => ObjectId.isValid(id));
+
+    const studios = studioIds.length
+      ? await studiosCollection
+          .find({ _id: { $in: studioIds.map((id) => new ObjectId(id)) } })
+          .toArray()
+      : [];
+
+    const studioMap = new Map(
+      studios.map((studio) => [String(studio._id), studio])
+    );
+
+    const ordered = favorites
+      .map((favorite) => studioMap.get(favorite.studioId))
+      .filter(Boolean);
+
+    res.json(ordered);
+  } catch (error) {
+    console.error("Failed to fetch favorites:", error);
+    sendError(res, 500, "Failed to fetch saved studios.");
+  }
+});
+
+app.get("/api/favorites/ids", requireAuth, async (req, res) => {
+  try {
+    const favorites = await favoritesCollection
+      .find({ userEmail: req.auth.user.email })
+      .project({ studioId: 1 })
+      .toArray();
+
+    res.json(favorites.map((favorite) => favorite.studioId));
+  } catch (error) {
+    console.error("Failed to fetch favorite ids:", error);
+    sendError(res, 500, "Failed to fetch saved studio ids.");
+  }
+});
+
+app.post("/api/favorites/:studioId", requireAuth, async (req, res) => {
+  try {
+    const { studioId } = req.params;
+
+    if (!ObjectId.isValid(studioId)) {
+      return sendError(res, 400, "Invalid studio ID.");
+    }
+
+    const studio = await studiosCollection.findOne({
+      _id: new ObjectId(studioId),
+    });
+
+    if (!studio) {
+      return sendError(res, 404, "Studio not found.");
+    }
+
+    try {
+      await favoritesCollection.insertOne({
+        userId: req.auth.user.id ?? req.auth.user.email,
+        userEmail: req.auth.user.email,
+        studioId,
+        createdAt: new Date(),
+      });
+    } catch (error) {
+      // Duplicate key -> already favorited; treat as success.
+      if (error && error.code !== 11000) {
+        throw error;
+      }
+    }
+
+    res.status(201).json({ success: true, message: "Studio saved." });
+  } catch (error) {
+    console.error("Failed to save favorite:", error);
+    sendError(res, 500, "Failed to save studio.");
+  }
+});
+
+app.delete("/api/favorites/:studioId", requireAuth, async (req, res) => {
+  try {
+    const { studioId } = req.params;
+
+    if (!ObjectId.isValid(studioId)) {
+      return sendError(res, 400, "Invalid studio ID.");
+    }
+
+    await favoritesCollection.deleteOne({
+      userEmail: req.auth.user.email,
+      studioId,
+    });
+
+    res.json({ success: true, message: "Studio removed from favorites." });
+  } catch (error) {
+    console.error("Failed to remove favorite:", error);
+    sendError(res, 500, "Failed to remove saved studio.");
+  }
+});
 
 app.use((req, res) => {
   sendError(res, 404, "Route not found.");
